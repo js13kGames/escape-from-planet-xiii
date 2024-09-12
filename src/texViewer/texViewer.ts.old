@@ -1,0 +1,48 @@
+
+import { createFramebuffer, createProgram, freeFramebuffer, getUniformLocation, gl, initWebgl, resetFramebuffer, setFramebuffer } from "../webgl";
+import * as Tex from "../texBuilder";
+import { createVertexAttributes } from "../renderer";
+import * as glEnum from "../webglEnums";
+import { renderTexToUint8Array } from "../texBuilderGlRenderer";
+import { textures } from "~textures";
+
+const addTexture = (tex: any[], resolution: number) => {
+    const texBuffer = renderTexToUint8Array(tex, resolution);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = resolution;
+    canvas.height = resolution;
+    const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+    const imgData = new ImageData(texBuffer, resolution, resolution);
+    ctx.putImageData(imgData, 0, 0);
+    const img = document.createElement("img");
+    img.src = canvas.toDataURL();
+    document.body.appendChild(img);
+};
+
+window.addEventListener('DOMContentLoaded', () => {
+    let offscreenCanvas = document.createElement("canvas");
+    initWebgl(offscreenCanvas);
+
+console.log("AYUOKEI?");
+
+    gl.disable(glEnum.DEPTH_TEST);
+    gl.disable(glEnum.CULL_FACE);
+
+    //Tex.renderTexture([Tex.Map, [Tex.Gradient, [Tex.CurUv, 3, 0.5]], [Tex.SawtoothMap, 20]]);
+    // WOOD!
+    // const scale = 10;
+    // const zebraNoise = [Tex.Map, [Tex.GradientNoise, [Tex.CurUv, scale, scale * 0.06]], [Tex.SawtoothMap, 20]];
+    // const grain = [Tex.Map, Tex.gradientFractalNoise(4, 100), [Tex.Smoothstep, 0.7, 0.5]];
+
+    // const fractalZebraNoise = [Tex.Fractal, zebraNoise, 4];
+
+    // const baseTex = [Tex.Mul, grain, fractalZebraNoise];
+
+    for (let t of textures) {
+        addTexture(t, 256);
+    }
+
+
+    // addTexture([Tex.Mix, [Tex.Constant, 0.34, 0.25, 0.16], [Tex.Constant, 0.7, 0.6, 0.46], fractalZebraNoise], 1024);
+});

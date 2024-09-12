@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <script>
+        let enums = "";
+        for (let k of Object.getOwnPropertyNames(WebGL2RenderingContext)) {
+            const v = WebGL2RenderingContext[k];
+
+            if (typeof (v) === "number") {
+                enums += `export const ${k} = ${v};\n`;
+            }
+
+        }
+        document.body.innerText = enums;
+    </script>
+</body>
+
+</html>

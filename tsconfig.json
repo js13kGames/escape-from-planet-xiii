@@ -1,0 +1,33 @@
+{
+    "compilerOptions": {
+        "experimentalDecorators": true,
+        "baseUrl": "./src",
+        "paths": {
+            "~*": [
+                "./*"
+            ]
+        },
+        "target": "ES2021",
+        "lib": [
+            "dom",
+            "dom.iterable",
+            "ES2023"
+        ],
+        "allowJs": true,
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
+        "strict": true,
+        "module": "esnext",
+        "moduleResolution": "node",
+        "preserveConstEnums": false,
+        "allowUnreachableCode": false,
+    },
+    "include": [
+        "src",
+        "./@types"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
+}

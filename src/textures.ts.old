@@ -1,0 +1,43 @@
+import { arrayPush, Deg } from "./aliasedFunctions";
+import { Abs, Add, Constant, ConstantBlue, ConstantGreen, ConstantMinusOne, ConstantOne, ConstantRed, ConstantZero, CurUv, Min, MixK, Mul, oneMinusVal, Smoothstep, ssPulse, TexNode, TransformUv, UnitSin, UvReplace, UvScale } from "./texBuilder";
+
+export const White = 0;
+export const Checkers = 1;
+export const Grassland = 2;
+export const Road = 3;
+export const Rainbow = 4;
+
+const grassland = () => {
+    const stripes = [MixK, [Constant, 0.18, 0.56, 0.15], [Constant, 0.42, 0.65, 0.07], [UvScale, [120], [UnitSin]]];
+    return [MixK, stripes, [TransformUv, stripes, 90 * Deg, 1, 1], [Checkers]];
+};
+
+const road = () => {
+    const lines = [Min, [Smoothstep, 0.75, 0.76], [Smoothstep, 0.86, 0.85]];
+    const color = [MixK, [Constant, 0.4], [Constant, 0.97, 0.71, 0], lines]
+    return [UvReplace, [Abs, [MixK, ConstantMinusOne, ConstantOne, [CurUv]]], color];
+};
+
+const rainbow = () => {
+    const colors: TexNode[] = [];
+    const reds = [1, 1, 1, 0, 1, 0.5, 0];
+    const greens = [0, 0.5, 1, 1, 0, 0, 0];
+    const blues = [0, 0, 0, 0, 1, 1, 1];
+    for (let i = 0; i < 7; ++i) {
+        const pos = (i + 0.5) / 7;
+        const width = 0.18;
+        const pulse = ssPulse(pos, width);
+        arrayPush(colors, [MixK, ConstantZero, [Constant, reds[i], 0], pulse]
+            , [MixK, ConstantZero, [Constant, 0, greens[i], 0], pulse]
+            , [MixK, ConstantZero, [Constant, 0, 0, blues[i]], pulse]);
+    }
+    return [Add, ...colors];
+};
+
+export const textures = [
+    [Constant, 1, 1, 1], // White
+    [Checkers], // Checkers
+    grassland(),
+    road(),
+    rainbow(),
+];

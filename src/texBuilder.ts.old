@@ -1,0 +1,224 @@
+
+// Hash implementations based on code from:
+// https://www.shadertoy.com/view/XlGcRh
+
+import { arrayLast } from "./utils";
+import { pow } from "./aliasedFunctions";
+import { texBuilder_frag } from "~shaders/bundle";
+import { buildTreeProgram, TreeProgramBuilderContext } from "~treeProgram";
+import { Vec3 } from "~juvec";
+
+// UV params, when not especified, use CurUv
+
+// (?uv)
+export const ValueNoise = 0;
+// 
+export const Checkers = 1;
+// (?uv)
+// From https://www.shadertoy.com/view/XdXGW8
+export const GradientNoise = 2;
+// (r, g, b)
+export const Constant = 4;
+// (fractalTexture, octaves, ?H, ?uv)
+export const Fractal = 5;
+// (?scaleX, ?scaleY)
+export const CurUv = 6;
+// (?freq, ?uv)
+export const SawtoothMap = 7;
+// (a,b,?uv)
+export const Smoothstep = 8;
+// (?uv) 
+// 0.5 + 0.5 * sin(uv.x)
+export const UnitSin = 9;
+
+
+export const ConstantOne = [Constant, 1];
+export const ConstantMinusOne = [Constant, -1];
+export const ConstantZero = [Constant, 0];
+export const ConstantRed = [Constant, 1, 0];
+export const ConstantGreen = [Constant, 0, 1, 0];
+export const ConstantBlue = [Constant, 0, 0, 1];
+
+// Operators
+
+// (a,b,c...)
+export const Mul = 100;
+
+// (src, map)
+// Takes each component of source, feeds it as uv.x to the map and it's replaced by the result
+export const ChannelMap = 101;
+
+// (a,b,k)
+export const MixK = 102;
+
+// (src, angle , sx, sy, ?tx, ?ty)
+export const TransformUv = 103;
+
+// (uvmap, src) takes x,y from uvmap as a texture and replaces current uv with that. 
+export const UvReplace = 104;
+
+// (src)
+export const Abs = 105;
+
+// (a,b)
+export const Min = 106;
+
+// (a,b)
+export const Max = 107;
+
+// (a,b)
+export const Add = 108;
+
+// (scale:Vec3?, src: TexNode);
+export const UvScale = 109;
+
+// Internal
+const SETUP = 200;
+
+export const gradientFractalNoise = (octaves: number, scale: number) => {
+    return [Fractal, [GradientNoise], octaves, [CurUv, scale]];
+};
+
+export const negateVal = (val: any[]) => {
+    return [Mul, ConstantMinusOne, val]
+}
+
+export const subtract = (a: any[], b: any[]) => {
+    return [Add, a, negateVal(b)];
+};
+
+export const oneMinusVal = (val: any[]) => {
+    return subtract(ConstantOne, val);
+};
+
+export const ssPulse = (c: number, w: number) => {
+    return subtract([Smoothstep, c - w, c], [Smoothstep, c, c + w]);
+}
+
+export type TexNode = any[] | number;
+
+export const getBuilder = (ctx: TreeProgramBuilderContext) => {
+    const { setReturn, doOp, getStackTop, pushToStack, pushToStackRaw, popStack, addCode, setConstant } = ctx;
+    const getCurUv = () => doOp([CurUv]);
+
+    const asFloat = (x?: number, def?: number) => {
+        return `float(${x ?? def ?? 0})`;
+    }
+
+    const asVec3 = (v: Vec3) => {
+        return `vec3(${asFloat(v[0])},${asFloat(v[1])},${asFloat(v[2])})`;
+    }
+
+    const asVec3WithFallbacks = (v: Vec3) => {
+        const x = v[0] ?? 0;
+        const y = v[1] ?? x;
+        const z = v[2] ?? y;
+        return asVec3([x, y, z]);
+    };
+
+    const setReturnV3 = (str: string) => { setReturn(`vec3(${str})`); }
+
+    return {
+        /*Checkers*/ 1: () => {
+            const uv = getCurUv();
+            const tmpVar = setConstant(`step(0.5, fract(${uv}))`);
+            setReturnV3(`mod(${tmpVar}.x+${tmpVar}.y,2.0)`);
+        },
+        /*Constant*/ 4: (...values: number[]) => {
+            setReturn(asVec3WithFallbacks(values as Vec3));
+        },
+        /*CurUv*/ 6: (...scale: number[]) => {
+            setReturn(`${getStackTop("u")}`);
+        },
+        /*Smoothstep*/ 8: (a: number, b: number) => {
+            const uv = getCurUv();
+            setReturnV3(`smoothstep(${asFloat(a)},${asFloat(b)},${uv}.x)`);
+        },
+        /*UnitSin*/ 9: () => {
+            const uv = getCurUv();
+            setReturnV3(`.5+sin(${uv}.x)*.5`);
+        },
+
+        /*Mul*/ 100: (...args: TexNode[]) => {
+            const params = args.map(x => doOp(x));
+            setReturn(params.join("*"));
+        },
+
+        /*MixK*/ 102: (a_: TexNode, b_: TexNode, k_: TexNode) => {
+            const a = doOp(a_);
+            const b = doOp(b_);
+            const k = doOp(k_);
+            setReturn(`mix(${a},${b},${k}.x)`);
+        },
+
+        /*TransformUv*/ 103: (src: TexNode, angle: number, sx: number, sy: number, tx?: number, ty?: number) => {
+            const cosA = `cos(${asFloat(angle)})`;
+            const sinA = `sin(${asFloat(angle)})`;
+            const curUv = getCurUv();
+            const uv = `vec3((mat2(${cosA},${sinA},-${sinA},${cosA})*vec2(${curUv}))*vec2(${asFloat(sx)},${asFloat(sy)})+vec2(${asFloat(tx)},${asFloat(ty)}),0)`;
+            pushToStack("u", uv);
+            const ret = doOp(src);
+            popStack("u");
+            setReturn(ret);
+        },
+
+        /*UvReplace*/ 104: (uvmap_: TexNode, src: TexNode) => {
+            const uvmap = doOp(uvmap_);
+            pushToStack("u", uvmap);
+            const ret = doOp(src);
+            popStack("u");
+            setReturn(ret);
+        },
+
+        /*Abs*/ 105: (src: TexNode) => {
+            setReturn(`abs(${doOp(src)})`);
+        },
+
+        /*Min*/ 106: (a: TexNode, b: TexNode) => {
+            setReturn(`min(${doOp(a)},${doOp(b)})`);
+        },
+
+        /*Max*/ 107: (a: TexNode, b: TexNode) => {
+            setReturn(`max(${doOp(a)},${doOp(b)})`);
+        },
+
+        /*Add*/ 108: (...args: TexNode[]) => {
+            const params = args.map(x => doOp(x));
+            setReturn(params.join("+"));
+        },
+
+        /*UvScale*/ 109: (scale: Vec3, src: TexNode) => {
+            pushToStack("u", `${getCurUv()}*${asVec3WithFallbacks(scale)}`);
+            const ret = doOp(src);
+            popStack("u");
+            setReturn(ret);
+        },
+
+        /* Setup */ 200: (n: TexNode) => {
+            addCode("vec3 t(vec3 U){");
+            pushToStackRaw("u", "U");
+            addCode(`return ${doOp(n)};}`);
+        },
+    };
+};
+
+export const renderTexture = (node: TexNode) => {
+    let sh = ``;
+    const addCode = (code: string) => { sh += code };
+
+    const constPrefix = "c";
+    let constCounter = 0;
+
+    const def = {
+        getBuilder,
+        addCode,
+        setConstant: (value: string, type?: string) => {
+            const name = constPrefix + (constCounter++);
+            addCode(`${type ?? `vec3`} ${name}=${value};`);
+            return name;
+        },
+    };
+
+    buildTreeProgram([SETUP, node], def);
+    return sh;
+};

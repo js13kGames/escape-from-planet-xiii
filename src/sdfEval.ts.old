@@ -1,0 +1,231 @@
+import { arrayFromLast, arrayLast } from "./utils";
+import { Deg, abs, assert, clamp, cos, floor, max, min, mix, saturate, sign, sin, sqrt } from "./aliasedFunctions";
+import { Vec2, Vec3, vec2, vec2Rotate, vec2Splay, vec3, vec3Splay, vecAbs, vecBorrow, vecClone, vecCopy, vecDot, vecEq, vecFMKA, vecLength, vecMax, vecMix, vecMulK, vecNormalize, vecSet, vecSub, vecSymmetricClamp, zeroVector } from "./juvec";
+import { SdfBuilder } from "./sdfBuilder";
+import * as SdfBuilderOps from "./sdfBuilderOps";
+
+
+const extrusionTmpVec = vec2Splay(0);
+
+export const extrusion = (sdf: number, p: Vec3, h: number) => {
+    // Borrow!
+    const w = extrusionTmpVec;
+    vecSet(w, sdf, abs(p[2]) - h);
+    const minMax = min(max(w[0], w[1]), 0.0);
+    vecMax(w, zeroVector, w);
+    return minMax + vecLength(w);
+}
+
+export const sdfEval = (sdf: SdfBuilder, pos: Vec3) => {
+    const buf = sdf.buf;
+
+
+    const sdfStack: Vec2[] = [];
+    const posStack: Vec3[] = [pos];
+    const materialStack: number[] = [0];
+    const scaleStack: number[] = [];
+    const onionStack: number[] = [];
+
+    let tmpVec2a = vec2Splay();
+    let tmpVec2b = vec2Splay();
+    let tmpVec3a = vec3Splay();
+    let tmpVec3b = vec3Splay();
+
+
+    const vec3FromBuf = (idx: number) => vec3(buf[idx], buf[idx + 1], buf[idx + 2]);
+
+    const pushSdfAndMat = (d: number) => {
+        assert(materialStack.length > 0);
+        sdfStack.push(vec2(d, arrayLast(materialStack)));
+    };
+
+    for (let cellIdx = 0; cellIdx < sdf.pos; ++cellIdx) {
+        const bIdx = cellIdx * 4;
+        assert(buf[bIdx] > 0);
+        switch (buf[bIdx]) {
+            // Shapes
+            case SdfBuilderOps.Sphere:
+            case SdfBuilderOps.Circle:
+                pushSdfAndMat(vecLength(arrayLast(posStack)) - buf[bIdx + 1]);
+                break;
+
+            case SdfBuilderOps.Box: {
+                vecAbs(arrayLast(posStack), tmpVec3a);
+                vecSub(tmpVec3a, vec3FromBuf(bIdx + 1), tmpVec3a);
+                vecMax(tmpVec3a, zeroVector, tmpVec3b);
+                pushSdfAndMat(vecLength(tmpVec3b) + min(max(tmpVec3a[0], max(tmpVec3a[1], tmpVec3a[2])), 0.0));
+                break;
+            }
+            case SdfBuilderOps.Cylinder: {
+                const p = arrayLast(posStack);
+                const sdfV = sqrt(p[0] * p[0] + p[1] * p[1]) - buf[bIdx + 1];
+                pushSdfAndMat(extrusion(sdfV, p, buf[bIdx + 2]));
+                break;
+            }
+            case SdfBuilderOps.Plane: {
+                vecNormalize(vec3FromBuf(bIdx + 1), tmpVec3a);
+                pushSdfAndMat(vecDot(arrayLast(posStack), tmpVec3a));
+                break;
+            }
+
+            // Combinations
+            case SdfBuilderOps.Union: {
+                const sdfA = sdfStack.pop() as Vec2;
+                const sdfB = sdfStack.pop() as Vec2;
+                sdfStack.push(sdfA[0] < sdfB[0] ? sdfA : sdfB);
+                break;
+            }
+
+            case SdfBuilderOps.SmoothUnion: {
+                const sdfA = sdfStack.pop() as Vec2;
+                const sdfB = sdfStack.pop() as Vec2;
+
+                const d1 = sdfB[0];
+                const d2 = sdfA[0];
+                const k = buf[bIdx + 1];
+                const h = saturate(0.5 + 0.5 * (d2 - d1) / k);
+                sdfStack.push([mix(d2, d1, h) - k * h * (1.0 - h), sdfA[1]]);
+                break;
+            }
+
+            case SdfBuilderOps.Subtract: {
+                const sdfA = sdfStack.pop() as Vec2;
+                const sdfB = sdfStack.pop() as Vec2;
+                sdfB[0] *= -1;
+                sdfB[1] = sdfA[1];
+                sdfStack.push(sdfA[0] > sdfB[0] ? sdfA : sdfB);
+                break;
+            }
+
+            case SdfBuilderOps.SmoothSubtract: {
+                const sdfA = sdfStack.pop() as Vec2;
+                const sdfB = sdfStack.pop() as Vec2;
+
+                const d1 = sdfB[0];
+                const d2 = sdfA[0];
+                const k = buf[bIdx + 1];
+                const h = saturate(0.5 - 0.5 * (d2 + d1) / k);
+                sdfStack.push([mix(d2, -d1, h) + k * h * (1.0 - h), sdfA[1]]);
+                break;
+            }
+
+            case SdfBuilderOps.Intersect: {
+                const sdfA = sdfStack.pop() as Vec2;
+                const sdfB = sdfStack.pop() as Vec2;
+                sdfB[1] = sdfA[1];
+                sdfStack.push(sdfA[0] > sdfB[0] ? sdfA : sdfB);
+                break;
+            }
+
+            // Transforms
+            case SdfBuilderOps.Translate:
+                posStack.push(vec3Splay());
+                vecSub(arrayFromLast(posStack, 1), vec3FromBuf(bIdx + 1), arrayLast(posStack));
+                break;
+            case SdfBuilderOps.RotateXY: {
+                const curPos = arrayLast(posStack);
+                vec2Rotate(curPos as unknown as Vec2, -buf[bIdx + 1], tmpVec2b);
+                posStack.push(vec3(tmpVec2b[0], tmpVec2b[1], curPos[2]));
+                break;
+            }
+            case SdfBuilderOps.RotateXZ: {
+                const curPos = arrayLast(posStack);
+                tmpVec2a[0] = curPos[0];
+                tmpVec2a[1] = curPos[2];
+                vec2Rotate(tmpVec2a, -buf[bIdx + 1], tmpVec2b);
+                posStack.push(vec3(tmpVec2b[0], curPos[1], tmpVec2b[1]));
+                break;
+            }
+            case SdfBuilderOps.RotateYZ: {
+                const curPos = arrayLast(posStack);
+                tmpVec2a[0] = curPos[1];
+                tmpVec2a[1] = curPos[2];
+                vec2Rotate(tmpVec2a, -buf[bIdx + 1], tmpVec2b);
+                posStack.push(vec3(curPos[0], tmpVec2b[0], tmpVec2b[1]));
+                break;
+            }
+            case SdfBuilderOps.Elongate: {
+                const prevPos = arrayLast(posStack);
+                posStack.push(vec3Splay());
+                const newPos = arrayLast(posStack);
+                vecSymmetricClamp(prevPos, vec3FromBuf(bIdx + 1), newPos);
+                vecSub(prevPos, newPos, newPos);
+                break;
+            }
+            case SdfBuilderOps.PopTranslationRotation:
+                posStack.pop();
+                break;
+            case SdfBuilderOps.Scale:
+                scaleStack.push(buf[bIdx + 1]);
+                posStack.push(vec3Splay());
+                vecMulK(arrayFromLast(posStack, 1), 1 / arrayLast(scaleStack), arrayLast(posStack));
+                break;
+            case SdfBuilderOps.PopScale:
+                posStack.pop();
+                arrayLast(sdfStack)[0] *= arrayLast(scaleStack);
+                scaleStack.pop();
+                break;
+            case SdfBuilderOps.Smooth:
+                arrayLast(sdfStack)[0] -= buf[bIdx + 1];
+                break;
+            case SdfBuilderOps.Symmetry: {
+                posStack.push(vecClone(arrayLast(posStack)));
+                const newPos = arrayLast(posStack);
+                if (buf[bIdx + 1] == 1.0) {
+                    newPos[0] = abs(newPos[0]);
+                }
+                if (buf[bIdx + 2] == 1.0) {
+                    newPos[1] = abs(newPos[1]);
+                }
+                if (buf[bIdx + 3] == 1.0) {
+                    newPos[2] = abs(newPos[2]);
+                }
+                break;
+            }
+
+            case SdfBuilderOps.Onion:
+                onionStack.push(buf[bIdx + 1]);
+                break;
+            case SdfBuilderOps.PopOnion:
+                arrayLast(sdfStack)[0] = abs(arrayLast(sdfStack)[0]) - arrayLast(onionStack);
+                onionStack.pop();
+                break;
+            case SdfBuilderOps.Revolution: {
+                const prevPos = arrayLast(posStack);
+                posStack.push(vecClone(prevPos));
+                const newPos = arrayLast(posStack);
+                const offset = buf[bIdx + 1];
+
+                // Using Z as up
+                const prevZ = newPos[2];
+                newPos[2] = 0;
+                newPos[0] = vecLength(newPos) - offset;
+                newPos[1] = 0;
+                newPos[2] = prevZ;
+
+                break;
+            }
+
+            case SdfBuilderOps.Distort: {
+                const freq =  buf[bIdx + 1];
+                const s = buf[bIdx + 2];
+                arrayLast(sdfStack)[0] -= sin(freq * pos[0]) * sin(freq * pos[1]) * sin(freq * pos[2]) * s;
+                break;
+            }
+
+            // Materials
+            case SdfBuilderOps.PushMaterial:
+                materialStack.push(buf[bIdx + 1]);
+                break;
+            // Keep outermost material around for 
+            // easier authoring
+            case SdfBuilderOps.PopMaterial:
+                if (materialStack.length > 1) {
+                    materialStack.pop();
+                }
+                break;
+        }
+    }
+    assert(sdfStack.length == 1);
+    return arrayLast(sdfStack);
+};

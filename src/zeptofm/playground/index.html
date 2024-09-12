@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZeptoFM Playground</title>
+    <style>
+        #piano-panel {
+            width: fit-content;
+            margin-left: auto;
+            margin-right: auto;
+            margin-top: 100px;
+
+            .spacer {
+                display: inline-block;
+            }
+        }
+
+        #controls-panel {
+            .control #title {
+                font-weight: bold;
+                margin-right: 1em;
+            }
+        }
+
+        #rendering-div {
+            font-weight: bold;
+            font-family: sans-serif;
+            color: red;
+        }
+    </style>
+</head>
+
+<body>
+    Write your instrument in playground.ts, compile, and try it here!
+    <div id="piano-panel"></div>
+    <div id="controls-panel"></div>
+    <script src="./playground.js"></script>
+
+</body>
+
+</html>
